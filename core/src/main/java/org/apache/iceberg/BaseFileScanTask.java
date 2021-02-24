@@ -66,6 +66,11 @@ class BaseFileScanTask implements FileScanTask {
   }
 
   @Override
+  public StructLike partition() {
+    return file.partition();
+  }
+
+  @Override
   public long start() {
     return 0;
   }
@@ -201,6 +206,11 @@ class BaseFileScanTask implements FileScanTask {
     @Override
     public PartitionSpec spec() {
       return fileScanTask.spec();
+    }
+
+    @Override
+    public StructLike partition() {
+      return fileScanTask.partition();
     }
 
     @Override

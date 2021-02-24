@@ -210,6 +210,11 @@ public class AllManifestsTable extends BaseMetadataTable {
     }
 
     @Override
+    public StructLike partition() {
+      return manifestListTask.partition();
+    }
+
+    @Override
     public long start() {
       return 0;
     }

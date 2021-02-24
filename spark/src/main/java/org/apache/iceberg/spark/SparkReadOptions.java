@@ -42,6 +42,9 @@ public class SparkReadOptions {
   // Overrides the table's read.split.open-file-cost
   public static final String FILE_OPEN_COST = "file-open-cost";
 
+  // Overrides the table's read.split.by-partition
+  public static final String BY_PARTITION = "by-partition";
+
   // Overrides the table's read.split.open-file-cost
   public static final String VECTORIZATION_ENABLED = "vectorization-enabled";
 

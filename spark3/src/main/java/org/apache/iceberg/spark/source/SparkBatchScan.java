@@ -39,6 +39,7 @@ import org.apache.iceberg.hadoop.HadoopInputFile;
 import org.apache.iceberg.hadoop.Util;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.spark.Spark3Util;
+import org.apache.iceberg.spark.SparkReadOptions;
 import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.iceberg.util.PropertyUtil;
 import org.apache.iceberg.util.TableScanUtil;
@@ -59,10 +60,18 @@ import org.apache.spark.sql.vectorized.ColumnarBatch;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import static org.apache.iceberg.TableProperties.SPLIT_BY_PARTITION;
+import static org.apache.iceberg.TableProperties.SPLIT_BY_PARTITION_DEFAULT;
+import static org.apache.iceberg.TableProperties.SPLIT_LOOKBACK;
+import static org.apache.iceberg.TableProperties.SPLIT_LOOKBACK_DEFAULT;
+import static org.apache.iceberg.TableProperties.SPLIT_OPEN_FILE_COST;
+import static org.apache.iceberg.TableProperties.SPLIT_OPEN_FILE_COST_DEFAULT;
+import static org.apache.iceberg.TableProperties.SPLIT_SIZE;
+import static org.apache.iceberg.TableProperties.SPLIT_SIZE_DEFAULT;
+
 abstract class SparkBatchScan implements Scan, Batch, SupportsReportStatistics {
   private static final Logger LOG = LoggerFactory.getLogger(SparkBatchScan.class);
 
-  private final Table table;
   private final boolean caseSensitive;
   private final boolean localityPreferred;
   private final Schema expectedSchema;
@@ -71,6 +80,12 @@ abstract class SparkBatchScan implements Scan, Batch, SupportsReportStatistics {
   private final Broadcast<EncryptionManager> encryptionManager;
   private final int batchSize;
   private final CaseInsensitiveStringMap options;
+
+  private final Table table;
+  private final Long splitSize;
+  private final Integer splitLookback;
+  private final Long splitOpenFileCost;
+  private final Boolean splitByPartition;
 
   // lazy variables
   private StructType readSchema = null;
@@ -87,6 +102,16 @@ abstract class SparkBatchScan implements Scan, Batch, SupportsReportStatistics {
     this.localityPreferred = Spark3Util.isLocalityEnabled(io.value(), table.location(), options);
     this.batchSize = Spark3Util.batchSize(table.properties(), options);
     this.options = options;
+
+    Map<String, String> props = table.properties();
+    this.splitSize = Spark3Util.propertyAsLong(options, SparkReadOptions.SPLIT_SIZE,
+        PropertyUtil.propertyAsLong(props, SPLIT_SIZE, SPLIT_SIZE_DEFAULT));
+    this.splitLookback = Spark3Util.propertyAsInt(options, SparkReadOptions.LOOKBACK,
+        PropertyUtil.propertyAsInt(props, SPLIT_LOOKBACK, SPLIT_LOOKBACK_DEFAULT));
+    this.splitOpenFileCost = Spark3Util.propertyAsLong(options, SparkReadOptions.FILE_OPEN_COST,
+        PropertyUtil.propertyAsLong(props, SPLIT_OPEN_FILE_COST, SPLIT_OPEN_FILE_COST_DEFAULT));
+    this.splitByPartition = Spark3Util.propertyAsBoolean(options, SparkReadOptions.BY_PARTITION,
+        PropertyUtil.propertyAsBoolean(props, SPLIT_BY_PARTITION, SPLIT_BY_PARTITION_DEFAULT));
   }
 
   protected Table table() {
@@ -103,6 +128,22 @@ abstract class SparkBatchScan implements Scan, Batch, SupportsReportStatistics {
 
   protected List<Expression> filterExpressions() {
     return filterExpressions;
+  }
+
+  protected long splitSize() {
+    return splitSize;
+  }
+
+  protected int splitLookback() {
+    return splitLookback;
+  }
+
+  protected long splitOpenFileCost() {
+    return splitOpenFileCost;
+  }
+
+  protected boolean splitByPartition() {
+    return splitByPartition;
   }
 
   protected abstract List<CombinedScanTask> tasks();

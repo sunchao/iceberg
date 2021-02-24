@@ -71,6 +71,11 @@ class StaticDataTask implements DataTask {
   }
 
   @Override
+  public StructLike partition() {
+    return BaseFile.EMPTY_PARTITION_DATA;
+  }
+
+  @Override
   public long start() {
     return 0;
   }
