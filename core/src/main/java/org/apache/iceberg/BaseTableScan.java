@@ -37,6 +37,7 @@ import org.apache.iceberg.relocated.com.google.common.base.MoreObjects;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.types.TypeUtil;
+import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.TableScanUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -198,6 +199,34 @@ abstract class BaseTableScan implements TableScan {
   }
 
   @Override
+  public TableScan preservePartitions(Collection<String> columns) {
+    if (columns.isEmpty()) {
+      throw new IllegalArgumentException("columns must be non-empty");
+    }
+    if (table.spec().isUnpartitioned()) {
+      throw new IllegalArgumentException("Table is unpartitioned while input columns are non-empty");
+    }
+
+    Set<Integer> selected = Sets.newHashSet();
+    for (String col : columns) {
+      boolean found = false;
+      for (PartitionField pf : table.spec().fields()) {
+        Types.NestedField field = table.schema().findField(pf.sourceId());
+        if (field.name().equals(col)) {
+          selected.add(pf.fieldId());
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        throw new IllegalArgumentException("Column '" + col + "' is not a partition column");
+      }
+    }
+
+    return newRefinedScan(ops, table, schema, context.withPreservedPartitionIndices(selected));
+  }
+
+  @Override
   public CloseableIterable<FileScanTask> planFiles() {
     Snapshot snapshot = snapshot();
     if (snapshot != null) {
@@ -243,7 +272,8 @@ abstract class BaseTableScan implements TableScan {
 
     CloseableIterable<FileScanTask> fileScanTasks = planFiles();
     CloseableIterable<FileScanTask> splitFiles = TableScanUtil.splitFiles(fileScanTasks, splitSize);
-    return TableScanUtil.planTasks(splitFiles, splitSize, lookback, openFileCost);
+    return TableScanUtil.planTasks(splitFiles, splitSize, lookback, openFileCost,
+        table.spec(), context.preservedPartitionIndices());
   }
 
   @Override

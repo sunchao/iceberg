@@ -29,8 +29,10 @@ import org.apache.spark.sql.catalyst.optimizer.PullupCorrelatedPredicatesInRowLe
 import org.apache.spark.sql.catalyst.optimizer.RewriteDelete
 import org.apache.spark.sql.catalyst.optimizer.RewriteMergeInto
 import org.apache.spark.sql.catalyst.optimizer.RewriteUpdate
+import org.apache.spark.sql.catalyst.optimizer.V2ScanPartitioning
 import org.apache.spark.sql.catalyst.parser.extensions.IcebergSparkSqlExtensionsParser
 import org.apache.spark.sql.execution.datasources.v2.ExtendedDataSourceV2Strategy
+import org.apache.spark.sql.execution.exchange.CheckDataSourcePartitioning
 
 class IcebergSparkSessionExtensions extends (SparkSessionExtensions => Unit) {
 
@@ -50,8 +52,14 @@ class IcebergSparkSessionExtensions extends (SparkSessionExtensions => Unit) {
     extensions.injectOptimizerRule { spark => RewriteDelete(spark) }
     extensions.injectOptimizerRule { spark => RewriteUpdate(spark) }
     extensions.injectOptimizerRule { spark => RewriteMergeInto(spark) }
+    extensions.injectOptimizerRule { spark => V2ScanPartitioning(spark) }
 
     // planner extensions
     extensions.injectPlannerStrategy { spark => ExtendedDataSourceV2Strategy(spark) }
+
+    // AQE query stage preparation extensions
+    extensions.injectQueryStagePrepRule {
+      spark => CheckDataSourcePartitioning(spark)
+    }
   }
 }

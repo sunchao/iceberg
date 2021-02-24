@@ -28,8 +28,10 @@ import java.util.stream.Collectors;
 import org.apache.iceberg.CombinedScanTask;
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.FileScanTask;
+import org.apache.iceberg.PartitionField;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.SchemaParser;
+import org.apache.iceberg.SinglePartitionScanTask;
 import org.apache.iceberg.SnapshotSummary;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableProperties;
@@ -39,6 +41,7 @@ import org.apache.iceberg.hadoop.HadoopInputFile;
 import org.apache.iceberg.hadoop.Util;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.spark.Spark3Util;
+import org.apache.iceberg.spark.SparkReadOptions;
 import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.iceberg.util.PropertyUtil;
 import org.apache.iceberg.util.TableScanUtil;
@@ -46,6 +49,10 @@ import org.apache.spark.broadcast.Broadcast;
 import org.apache.spark.sql.RuntimeConfig;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.connector.iceberg.distributions.Distribution;
+import org.apache.spark.sql.connector.iceberg.expressions.SortOrder;
+import org.apache.spark.sql.connector.iceberg.read.HasPartitionKey;
+import org.apache.spark.sql.connector.iceberg.read.SupportsReportPartitioning;
 import org.apache.spark.sql.connector.read.Batch;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReader;
@@ -59,7 +66,7 @@ import org.apache.spark.sql.vectorized.ColumnarBatch;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-abstract class SparkBatchScan implements Scan, Batch, SupportsReportStatistics {
+abstract class SparkBatchScan implements Scan, Batch, SupportsReportStatistics, SupportsReportPartitioning {
   private static final Logger LOG = LoggerFactory.getLogger(SparkBatchScan.class);
 
   private final Table table;
@@ -71,6 +78,7 @@ abstract class SparkBatchScan implements Scan, Batch, SupportsReportStatistics {
   private final Broadcast<EncryptionManager> encryptionManager;
   private final int batchSize;
   private final CaseInsensitiveStringMap options;
+  private final Boolean splitByPartition;
 
   // lazy variables
   private StructType readSchema = null;
@@ -87,6 +95,7 @@ abstract class SparkBatchScan implements Scan, Batch, SupportsReportStatistics {
     this.localityPreferred = Spark3Util.isLocalityEnabled(io.value(), table.location(), options);
     this.batchSize = Spark3Util.batchSize(table.properties(), options);
     this.options = options;
+    this.splitByPartition = Spark3Util.propertyAsBoolean(options, SparkReadOptions.BY_PARTITION, true);
   }
 
   protected Table table() {
@@ -106,6 +115,13 @@ abstract class SparkBatchScan implements Scan, Batch, SupportsReportStatistics {
   }
 
   protected abstract List<CombinedScanTask> tasks();
+
+  protected Collection<PartitionField> preservedPartitions() {
+    if (splitByPartition && !table.spec().isUnpartitioned()) {
+      return table.spec().fields();
+    }
+    return null;
+  }
 
   @Override
   public Batch toBatch() {
@@ -128,13 +144,31 @@ abstract class SparkBatchScan implements Scan, Batch, SupportsReportStatistics {
 
     List<CombinedScanTask> scanTasks = tasks();
     InputPartition[] readTasks = new InputPartition[scanTasks.size()];
+
     for (int i = 0; i < scanTasks.size(); i++) {
-      readTasks[i] = new ReadTask(
-          scanTasks.get(i), tableSchemaString, expectedSchemaString, nameMappingString, io, encryptionManager,
-          caseSensitive, localityPreferred);
+      CombinedScanTask scanTask = scanTasks.get(i);
+      if (scanTask instanceof SinglePartitionScanTask) {
+        readTasks[i] = new ReadTaskWithPartitionKey((SinglePartitionScanTask) scanTask,
+            tableSchemaString, expectedSchemaString, nameMappingString, io, encryptionManager,
+            caseSensitive, localityPreferred);
+      } else {
+        readTasks[i] = new ReadTask(
+            scanTasks.get(i), tableSchemaString, expectedSchemaString, nameMappingString, io, encryptionManager,
+            caseSensitive, localityPreferred);
+      }
     }
 
     return readTasks;
+  }
+
+  @Override
+  public Distribution distribution() {
+    return Spark3Util.buildRequiredDistribution(table);
+  }
+
+  @Override
+  public SortOrder[] ordering() {
+    return Spark3Util.buildRequiredOrdering(distribution(), table);
   }
 
   @Override
@@ -258,6 +292,24 @@ abstract class SparkBatchScan implements Scan, Batch, SupportsReportStatistics {
     BatchReader(ReadTask task, int batchSize) {
       super(task.task, task.expectedSchema(), task.nameMappingString, task.io(), task.encryption(),
           task.isCaseSensitive(), batchSize);
+    }
+  }
+
+  private static class ReadTaskWithPartitionKey extends ReadTask implements HasPartitionKey {
+    private final InternalRow partition;
+
+    ReadTaskWithPartitionKey(SinglePartitionScanTask task, String tableSchemaString,
+        String expectedSchemaString, String nameMappingString,
+        Broadcast<FileIO> io, Broadcast<EncryptionManager> encryptionManager, boolean caseSensitive,
+        boolean localityPreferred) {
+      super(task, tableSchemaString, expectedSchemaString, nameMappingString, io,
+          encryptionManager, caseSensitive, localityPreferred);
+      this.partition = new StructInternalRow(task.partitionType()).setStruct(task.partitionData());
+    }
+
+    @Override
+    public InternalRow partitionKey() {
+      return partition;
     }
   }
 

@@ -22,6 +22,7 @@ package org.apache.spark.sql.catalyst.utils
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst
 import org.apache.spark.sql.catalyst.analysis.Resolver
+import org.apache.spark.sql.catalyst.expressions.{SortOrder => CatalystSortOrder}
 import org.apache.spark.sql.catalyst.expressions.IcebergBucketTransform
 import org.apache.spark.sql.catalyst.expressions.IcebergDayTransform
 import org.apache.spark.sql.catalyst.expressions.IcebergHourTransform
@@ -32,6 +33,10 @@ import org.apache.spark.sql.catalyst.expressions.NamedExpression
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.plans.logical.RepartitionByExpression
 import org.apache.spark.sql.catalyst.plans.logical.Sort
+import org.apache.spark.sql.catalyst.plans.physical.{ClusteredDistribution => CatalystClusteredDistribution}
+import org.apache.spark.sql.catalyst.plans.physical.{Distribution => CatalystDistribution}
+import org.apache.spark.sql.catalyst.plans.physical.{OrderedDistribution => CatalystOrderedDistribution}
+import org.apache.spark.sql.catalyst.plans.physical.{UnspecifiedDistribution => CatalystUnspecifiedDistribution}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits
 import org.apache.spark.sql.connector.expressions.ApplyTransform
 import org.apache.spark.sql.connector.expressions.BucketTransform
@@ -98,7 +103,7 @@ object DistributionAndOrderingUtils {
     queryWithDistributionAndOrdering
   }
 
-  private def toCatalyst(
+  def toCatalyst(
       expr: Expression,
       query: LogicalPlan,
       resolver: Resolver): catalyst.expressions.Expression = {
@@ -139,6 +144,19 @@ object DistributionAndOrderingUtils {
         throw new RuntimeException(s"$expr is not currently supported")
 
     }
+  }
+
+  def toCatalyst(
+      distribution: Distribution,
+      query: LogicalPlan,
+      resolver: Resolver): CatalystDistribution = distribution match {
+    case d: ClusteredDistribution =>
+      CatalystClusteredDistribution(d.clustering.map(toCatalyst(_, query, resolver)))
+    case d: OrderedDistribution =>
+      CatalystOrderedDistribution(d.ordering.map(toCatalyst(_, query, resolver)
+        .asInstanceOf[CatalystSortOrder]))
+    case _: UnspecifiedDistribution =>
+      CatalystUnspecifiedDistribution
   }
 
   private def toCatalyst(direction: SortDirection): catalyst.expressions.SortDirection = {

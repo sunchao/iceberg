@@ -30,6 +30,7 @@ import org.apache.spark.sql.catalyst.expressions.And
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
+import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical.AddPartitionField
 import org.apache.spark.sql.catalyst.plans.logical.Call
@@ -40,9 +41,12 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.plans.logical.MergeInto
 import org.apache.spark.sql.catalyst.plans.logical.ReplaceData
 import org.apache.spark.sql.catalyst.plans.logical.SetWriteDistributionAndOrdering
+import org.apache.spark.sql.catalyst.plans.physical.UnspecifiedDistribution
+import org.apache.spark.sql.catalyst.utils.DistributionAndOrderingUtils
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.connector.iceberg.read.SupportsFileFilter
+import org.apache.spark.sql.connector.iceberg.read.SupportsReportPartitioning
 import org.apache.spark.sql.execution.FilterExec
 import org.apache.spark.sql.execution.LeafExecNode
 import org.apache.spark.sql.execution.ProjectExec
@@ -76,11 +80,21 @@ case class ExtendedDataSourceV2Strategy(spark: SparkSession) extends Strategy {
         filterable,
         filesAccumulator) :: Nil
 
-    case PhysicalOperation(project, filters, DataSourceV2ScanRelation(_, scan: SupportsFileFilter, output)) =>
-      // projection and filters were already pushed down in the optimizer.
-      // this uses PhysicalOperation to get the projection and ensure that if the batch scan does
-      // not support columnar, a projection is added to convert the rows to UnsafeRow.
-      val batchExec = ExtendedBatchScanExec(output, scan)
+    case PhysicalOperation(project, filters, DataSourceV2ScanRelation(_, scan, output)) =>
+      val (distribution, ordering) = scan match {
+        case v: SupportsReportPartitioning =>
+          val distribution = DistributionAndOrderingUtils.toCatalyst(
+            v.distribution, plan, spark.sessionState.conf.resolver)
+          val ordering = v.ordering.map(
+            DistributionAndOrderingUtils.toCatalyst(_, plan, spark.sessionState.conf.resolver)
+              .asInstanceOf[SortOrder]).toSeq
+          (Some(distribution), ordering)
+        case _ =>
+          (None, Seq.empty)
+      }
+
+      val cachePartitions = !scan.isInstanceOf[SupportsFileFilter]
+      val batchExec = ExtendedBatchScanExec(output, scan, cachePartitions, distribution, ordering)
       withProjectAndFilter(project, filters, batchExec, !batchExec.supportsColumnar) :: Nil
 
     case ReplaceData(relation, batchWrite, query) =>
