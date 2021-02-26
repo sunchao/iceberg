@@ -33,6 +33,7 @@ import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.SnapshotSummary;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableProperties;
+import org.apache.iceberg.TableScan;
 import org.apache.iceberg.encryption.EncryptionManager;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.hadoop.HadoopInputFile;
@@ -103,15 +104,10 @@ abstract class SparkBatchScan implements Scan, Batch, SupportsReportStatistics {
     this.batchSize = Spark3Util.batchSize(table.properties(), options);
     this.options = options;
 
-    Map<String, String> props = table.properties();
-    this.splitSize = Spark3Util.propertyAsLong(options, SparkReadOptions.SPLIT_SIZE,
-        PropertyUtil.propertyAsLong(props, SPLIT_SIZE, SPLIT_SIZE_DEFAULT));
-    this.splitLookback = Spark3Util.propertyAsInt(options, SparkReadOptions.LOOKBACK,
-        PropertyUtil.propertyAsInt(props, SPLIT_LOOKBACK, SPLIT_LOOKBACK_DEFAULT));
-    this.splitOpenFileCost = Spark3Util.propertyAsLong(options, SparkReadOptions.FILE_OPEN_COST,
-        PropertyUtil.propertyAsLong(props, SPLIT_OPEN_FILE_COST, SPLIT_OPEN_FILE_COST_DEFAULT));
-    this.splitByPartition = Spark3Util.propertyAsBoolean(options, SparkReadOptions.BY_PARTITION,
-        PropertyUtil.propertyAsBoolean(props, SPLIT_BY_PARTITION, SPLIT_BY_PARTITION_DEFAULT));
+    this.splitSize = Spark3Util.propertyAsLong(options, SparkReadOptions.SPLIT_SIZE, null);
+    this.splitLookback = Spark3Util.propertyAsInt(options, SparkReadOptions.LOOKBACK, null);
+    this.splitOpenFileCost = Spark3Util.propertyAsLong(options, SparkReadOptions.FILE_OPEN_COST, null);
+    this.splitByPartition = Spark3Util.propertyAsBoolean(options, SparkReadOptions.BY_PARTITION, null);
   }
 
   protected Table table() {
@@ -130,19 +126,42 @@ abstract class SparkBatchScan implements Scan, Batch, SupportsReportStatistics {
     return filterExpressions;
   }
 
+  protected long splitSize(TableScan scan) {
+    if (splitSize == null) {
+      return scan.targetSplitSize();
+    }
+    return splitSize;
+  }
+
   protected long splitSize() {
+    if (splitSize == null) {
+      Map<String, String> props = table.properties();
+      return PropertyUtil.propertyAsLong(props, SPLIT_SIZE, SPLIT_SIZE_DEFAULT);
+    }
     return splitSize;
   }
 
   protected int splitLookback() {
+    if (splitLookback == null) {
+      Map<String, String> props = table.properties();
+      return PropertyUtil.propertyAsInt(props, SPLIT_LOOKBACK, SPLIT_LOOKBACK_DEFAULT);
+    }
     return splitLookback;
   }
 
   protected long splitOpenFileCost() {
+    if (splitOpenFileCost == null) {
+      Map<String, String> props = table.properties();
+      return PropertyUtil.propertyAsLong(props, SPLIT_OPEN_FILE_COST, SPLIT_OPEN_FILE_COST_DEFAULT);
+    }
     return splitOpenFileCost;
   }
 
   protected boolean splitByPartition() {
+    if (splitByPartition == null) {
+      Map<String, String> props = table().properties();
+      return PropertyUtil.propertyAsBoolean(props, SPLIT_BY_PARTITION, SPLIT_BY_PARTITION_DEFAULT);
+    }
     return splitByPartition;
   }
 

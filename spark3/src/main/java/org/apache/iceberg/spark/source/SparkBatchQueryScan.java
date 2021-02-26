@@ -105,7 +105,7 @@ class SparkBatchQueryScan extends SparkBatchScan {
         }
       }
 
-      scan = scan.option(TableProperties.SPLIT_SIZE, String.valueOf(splitSize()));
+      scan = scan.option(TableProperties.SPLIT_SIZE, String.valueOf(splitSize(scan)));
       scan = scan.option(TableProperties.SPLIT_LOOKBACK, String.valueOf(splitLookback()));
       scan = scan.option(TableProperties.SPLIT_OPEN_FILE_COST, String.valueOf(splitOpenFileCost()));
 
@@ -117,17 +117,19 @@ class SparkBatchQueryScan extends SparkBatchScan {
       if (splitByPartition()) {
         try (
             CloseableIterable<FileScanTask> files = scan.planFiles();
-            CloseableIterable<FileScanTask> splitFiles = TableScanUtil.splitFiles(files, splitSize())
+            CloseableIterable<FileScanTask> splitFiles = TableScanUtil.splitFiles(files,
+                splitSize(scan))
         ) {
           ListMultimap<StructLike, FileScanTask> groupedFiles = Multimaps.newListMultimap(
               Maps.newHashMap(), Lists::newArrayList);
           splitFiles.forEach(f -> groupedFiles.put(f.partition(), f));
 
+          long splitSize = splitSize(scan);
           this.tasks = Lists.newArrayList(
               CloseableIterable.concat(
                   groupedFiles.asMap().values().stream().map(t ->
                       TableScanUtil.planTasks(CloseableIterable.withNoopClose(t),
-                          splitSize(), splitLookback(), splitOpenFileCost()
+                          splitSize, splitLookback(), splitOpenFileCost()
                       )).collect(Collectors.toList()))
           );
         } catch (IOException e) {
