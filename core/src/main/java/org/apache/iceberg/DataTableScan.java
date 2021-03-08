@@ -90,8 +90,8 @@ public class DataTableScan extends BaseTableScan {
   }
 
   @Override
-  public long targetSplitSize() {
-    return tableOps().current().propertyAsLong(
+  protected long targetSplitSize(TableOperations ops) {
+    return ops.current().propertyAsLong(
         TableProperties.SPLIT_SIZE, TableProperties.SPLIT_SIZE_DEFAULT);
   }
 }

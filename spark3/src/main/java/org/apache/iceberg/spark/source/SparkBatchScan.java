@@ -28,12 +28,12 @@ import java.util.stream.Collectors;
 import org.apache.iceberg.CombinedScanTask;
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.FileScanTask;
+import org.apache.iceberg.PartitionField;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.SnapshotSummary;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableProperties;
-import org.apache.iceberg.TableScan;
 import org.apache.iceberg.encryption.EncryptionManager;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.hadoop.HadoopInputFile;
@@ -61,18 +61,10 @@ import org.apache.spark.sql.vectorized.ColumnarBatch;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import static org.apache.iceberg.TableProperties.SPLIT_BY_PARTITION;
-import static org.apache.iceberg.TableProperties.SPLIT_BY_PARTITION_DEFAULT;
-import static org.apache.iceberg.TableProperties.SPLIT_LOOKBACK;
-import static org.apache.iceberg.TableProperties.SPLIT_LOOKBACK_DEFAULT;
-import static org.apache.iceberg.TableProperties.SPLIT_OPEN_FILE_COST;
-import static org.apache.iceberg.TableProperties.SPLIT_OPEN_FILE_COST_DEFAULT;
-import static org.apache.iceberg.TableProperties.SPLIT_SIZE;
-import static org.apache.iceberg.TableProperties.SPLIT_SIZE_DEFAULT;
-
 abstract class SparkBatchScan implements Scan, Batch, SupportsReportStatistics {
   private static final Logger LOG = LoggerFactory.getLogger(SparkBatchScan.class);
 
+  private final Table table;
   private final boolean caseSensitive;
   private final boolean localityPreferred;
   private final Schema expectedSchema;
@@ -81,11 +73,6 @@ abstract class SparkBatchScan implements Scan, Batch, SupportsReportStatistics {
   private final Broadcast<EncryptionManager> encryptionManager;
   private final int batchSize;
   private final CaseInsensitiveStringMap options;
-
-  private final Table table;
-  private final Long splitSize;
-  private final Integer splitLookback;
-  private final Long splitOpenFileCost;
   private final Boolean splitByPartition;
 
   // lazy variables
@@ -103,11 +90,7 @@ abstract class SparkBatchScan implements Scan, Batch, SupportsReportStatistics {
     this.localityPreferred = Spark3Util.isLocalityEnabled(io.value(), table.location(), options);
     this.batchSize = Spark3Util.batchSize(table.properties(), options);
     this.options = options;
-
-    this.splitSize = Spark3Util.propertyAsLong(options, SparkReadOptions.SPLIT_SIZE, null);
-    this.splitLookback = Spark3Util.propertyAsInt(options, SparkReadOptions.LOOKBACK, null);
-    this.splitOpenFileCost = Spark3Util.propertyAsLong(options, SparkReadOptions.FILE_OPEN_COST, null);
-    this.splitByPartition = Spark3Util.propertyAsBoolean(options, SparkReadOptions.BY_PARTITION, null);
+    this.splitByPartition = Spark3Util.propertyAsBoolean(options, SparkReadOptions.BY_PARTITION, false);
   }
 
   protected Table table() {
@@ -126,46 +109,14 @@ abstract class SparkBatchScan implements Scan, Batch, SupportsReportStatistics {
     return filterExpressions;
   }
 
-  protected long splitSize(TableScan scan) {
-    if (splitSize == null) {
-      return scan.targetSplitSize();
-    }
-    return splitSize;
-  }
-
-  protected long splitSize() {
-    if (splitSize == null) {
-      Map<String, String> props = table.properties();
-      return PropertyUtil.propertyAsLong(props, SPLIT_SIZE, SPLIT_SIZE_DEFAULT);
-    }
-    return splitSize;
-  }
-
-  protected int splitLookback() {
-    if (splitLookback == null) {
-      Map<String, String> props = table.properties();
-      return PropertyUtil.propertyAsInt(props, SPLIT_LOOKBACK, SPLIT_LOOKBACK_DEFAULT);
-    }
-    return splitLookback;
-  }
-
-  protected long splitOpenFileCost() {
-    if (splitOpenFileCost == null) {
-      Map<String, String> props = table.properties();
-      return PropertyUtil.propertyAsLong(props, SPLIT_OPEN_FILE_COST, SPLIT_OPEN_FILE_COST_DEFAULT);
-    }
-    return splitOpenFileCost;
-  }
-
-  protected boolean splitByPartition() {
-    if (splitByPartition == null) {
-      Map<String, String> props = table().properties();
-      return PropertyUtil.propertyAsBoolean(props, SPLIT_BY_PARTITION, SPLIT_BY_PARTITION_DEFAULT);
-    }
-    return splitByPartition;
-  }
-
   protected abstract List<CombinedScanTask> tasks();
+
+  protected Collection<PartitionField> preservedPartitions() {
+    if (splitByPartition && !table.spec().isUnpartitioned()) {
+      return table.spec().fields();
+    }
+    return null;
+  }
 
   @Override
   public Batch toBatch() {

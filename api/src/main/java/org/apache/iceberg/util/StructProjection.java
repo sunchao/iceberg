@@ -39,7 +39,30 @@ public class StructProjection implements StructLike {
    */
   public static StructProjection create(Schema schema, Set<Integer> ids) {
     StructType structType = schema.asStruct();
+    return create(structType, ids);
+  }
+
+  /**
+   * Creates a projecting wrapper for {@link StructLike} rows.
+   * <p>
+   * This projection does not work with repeated types like lists and maps.
+   *
+   * @param structType struct type of rows wrapped by this projection
+   * @param ids field ids from the row schema to project
+   * @return a wrapper to project rows
+   */
+  public static StructProjection create(StructType structType, Set<Integer> ids) {
     return new StructProjection(structType, TypeUtil.select(structType, ids));
+  }
+
+  /**
+   * Creates a projecting wrapper for {@link StructLike} rows by copying from `other`.
+   *
+   * @param other the projection wrapper to copy from
+   * @return a wrapper to project rows
+   */
+  public static StructProjection create(StructProjection other) {
+    return new StructProjection(other);
   }
 
   /**
@@ -59,6 +82,13 @@ public class StructProjection implements StructLike {
   private final int[] positionMap;
   private final StructProjection[] nestedProjections;
   private StructLike struct;
+
+  private StructProjection(StructProjection other) {
+    this.type = other.type;
+    this.positionMap = other.positionMap;
+    this.nestedProjections = other.nestedProjections;
+    this.struct = other.struct;
+  }
 
   private StructProjection(StructType structType, StructType projection) {
     this.type = projection;
@@ -99,6 +129,10 @@ public class StructProjection implements StructLike {
   public StructProjection wrap(StructLike newStruct) {
     this.struct = newStruct;
     return this;
+  }
+
+  public StructType type() {
+    return type;
   }
 
   @Override

@@ -120,8 +120,8 @@ public class AllDataFilesTable extends BaseMetadataTable {
     }
 
     @Override
-    public long targetSplitSize() {
-      return tableOps().current().propertyAsLong(
+    protected long targetSplitSize(TableOperations ops) {
+      return ops.current().propertyAsLong(
           TableProperties.METADATA_SPLIT_SIZE, TableProperties.METADATA_SPLIT_SIZE_DEFAULT);
     }
 

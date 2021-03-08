@@ -20,13 +20,16 @@
 package org.apache.iceberg.spark.source;
 
 import java.io.IOException;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.apache.iceberg.CombinedScanTask;
 import org.apache.iceberg.FileScanTask;
+import org.apache.iceberg.PartitionField;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.Table;
@@ -38,17 +41,30 @@ import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.spark.Spark3Util;
+import org.apache.iceberg.spark.SparkReadOptions;
+import org.apache.iceberg.util.PropertyUtil;
 import org.apache.iceberg.util.TableScanUtil;
 import org.apache.spark.broadcast.Broadcast;
 import org.apache.spark.sql.connector.iceberg.read.SupportsFileFilter;
 import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
+import static org.apache.iceberg.TableProperties.SPLIT_LOOKBACK;
+import static org.apache.iceberg.TableProperties.SPLIT_LOOKBACK_DEFAULT;
+import static org.apache.iceberg.TableProperties.SPLIT_OPEN_FILE_COST;
+import static org.apache.iceberg.TableProperties.SPLIT_OPEN_FILE_COST_DEFAULT;
+import static org.apache.iceberg.TableProperties.SPLIT_SIZE;
+import static org.apache.iceberg.TableProperties.SPLIT_SIZE_DEFAULT;
+
 class SparkMergeScan extends SparkBatchScan implements SupportsFileFilter {
 
   private final boolean ignoreResiduals;
   private final Schema expectedSchema;
   private final Long snapshotId;
+  private final Long splitSize;
+  private final Integer splitLookback;
+  private final Long splitOpenFileCost;
 
   // lazy variables
   private List<FileScanTask> files = null; // lazy cache of files
@@ -63,6 +79,17 @@ class SparkMergeScan extends SparkBatchScan implements SupportsFileFilter {
 
     this.ignoreResiduals = ignoreResiduals;
     this.expectedSchema = expectedSchema;
+
+    Map<String, String> props = table.properties();
+
+    long tableSplitSize = PropertyUtil.propertyAsLong(props, SPLIT_SIZE, SPLIT_SIZE_DEFAULT);
+    this.splitSize = Spark3Util.propertyAsLong(options, SparkReadOptions.SPLIT_SIZE, tableSplitSize);
+
+    int tableSplitLookback = PropertyUtil.propertyAsInt(props, SPLIT_LOOKBACK, SPLIT_LOOKBACK_DEFAULT);
+    this.splitLookback = Spark3Util.propertyAsInt(options, SparkReadOptions.LOOKBACK, tableSplitLookback);
+
+    long tableOpenFileCost = PropertyUtil.propertyAsLong(props, SPLIT_OPEN_FILE_COST, SPLIT_OPEN_FILE_COST_DEFAULT);
+    this.splitOpenFileCost = Spark3Util.propertyAsLong(options, SparkReadOptions.FILE_OPEN_COST, tableOpenFileCost);
 
     Preconditions.checkArgument(!options.containsKey("snapshot-id"), "Cannot have snapshot-id in options");
     Snapshot currentSnapshot = table.currentSnapshot();
@@ -123,12 +150,18 @@ class SparkMergeScan extends SparkBatchScan implements SupportsFileFilter {
   @Override
   protected synchronized List<CombinedScanTask> tasks() {
     if (tasks == null) {
+      Set<Integer> preservedPartitionIndices = null;
+      Collection<PartitionField> selected = preservedPartitions();
+      if (selected != null) {
+        preservedPartitionIndices = selected.stream()
+            .map(PartitionField::fieldId).collect(Collectors.toSet());
+      }
       CloseableIterable<FileScanTask> splitFiles = TableScanUtil.splitFiles(
           CloseableIterable.withNoopClose(files()),
-          splitSize());
+          splitSize);
       CloseableIterable<CombinedScanTask> scanTasks = TableScanUtil.planTasks(
-          splitFiles, splitSize(),
-          splitLookback(), splitOpenFileCost());
+          splitFiles, splitSize,
+          splitLookback, splitOpenFileCost, table().spec(), preservedPartitionIndices);
       tasks = Lists.newArrayList(scanTasks);
     }
 

@@ -48,13 +48,6 @@ public interface FileScanTask extends ScanTask {
   PartitionSpec spec();
 
   /**
-   * The partition data for the file of this task.
-   *
-   * @return the partition data for the file of this task
-   */
-  StructLike partition();
-
-  /**
    * The starting position of this scan range in the file.
    *
    * @return the start position of this scan range

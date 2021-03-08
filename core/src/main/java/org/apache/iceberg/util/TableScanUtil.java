@@ -19,12 +19,22 @@
 
 package org.apache.iceberg.util;
 
+import java.util.List;
+import java.util.Set;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.apache.iceberg.BaseCombinedScanTask;
 import org.apache.iceberg.CombinedScanTask;
 import org.apache.iceberg.FileScanTask;
+import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.relocated.com.google.common.collect.FluentIterable;
+import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
+import org.apache.iceberg.relocated.com.google.common.collect.ListMultimap;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.iceberg.relocated.com.google.common.collect.Multimaps;
+import org.apache.iceberg.types.Types;
 
 public class TableScanUtil {
 
@@ -48,13 +58,42 @@ public class TableScanUtil {
   }
 
   public static CloseableIterable<CombinedScanTask> planTasks(CloseableIterable<FileScanTask> splitFiles,
-                                                              long splitSize, int lookback, long openFileCost) {
+      long splitSize, int lookback, long openFileCost, PartitionSpec spec) {
+    return planTasks(splitFiles, splitSize, lookback, openFileCost, spec, null);
+  }
+
+  public static CloseableIterable<CombinedScanTask> planTasks(CloseableIterable<FileScanTask> splitFiles,
+      long splitSize, int lookback, long openFileCost, PartitionSpec spec,
+      Set<Integer> preservedPartitionIndices) {
     Function<FileScanTask, Long> weightFunc = file -> Math.max(file.length(), openFileCost);
 
-    return CloseableIterable.transform(
-        CloseableIterable.combine(
-            new BinPacking.PackingIterable<>(splitFiles, splitSize, lookback, weightFunc, true),
-            splitFiles),
-        BaseCombinedScanTask::new);
+    if (preservedPartitionIndices != null) {
+      StructProjection projectedStruct = StructProjection.create(spec.partitionType(),
+          preservedPartitionIndices);
+      Types.StructType projectedPartitionType = projectedStruct.type();
+      ListMultimap<StructLikeWrapper, FileScanTask> groupedFiles = Multimaps.newListMultimap(
+          Maps.newHashMap(), Lists::newArrayList);
+
+      splitFiles.forEach(f -> {
+        StructLikeWrapper wrapper = StructLikeWrapper.forType(projectedPartitionType)
+            .set(StructProjection.create(projectedStruct).wrap(f.file().partition()));
+        groupedFiles.put(wrapper, f);
+      });
+
+      List<Iterable<BaseCombinedScanTask>> groupedTasks =
+              groupedFiles.asMap().values().stream().map(t ->
+                  Iterables.transform(
+                  new BinPacking.PackingIterable<>(CloseableIterable.withNoopClose(t),
+                      splitSize, lookback, weightFunc, true),
+                      BaseCombinedScanTask::new
+                  )).collect(Collectors.toList());
+      return CloseableIterable.combine(Iterables.concat(groupedTasks), splitFiles);
+    } else {
+      return CloseableIterable.transform(
+          CloseableIterable.combine(
+              new BinPacking.PackingIterable<>(splitFiles, splitSize, lookback, weightFunc, true),
+              splitFiles),
+          BaseCombinedScanTask::new);
+    }
   }
 }

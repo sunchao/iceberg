@@ -20,28 +20,24 @@
 package org.apache.iceberg.spark.source;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
+import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
 import org.apache.iceberg.CombinedScanTask;
-import org.apache.iceberg.FileScanTask;
+import org.apache.iceberg.PartitionField;
 import org.apache.iceberg.Schema;
-import org.apache.iceberg.StructLike;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.TableScan;
 import org.apache.iceberg.encryption.EncryptionManager;
+import org.apache.iceberg.exceptions.RuntimeIOException;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.FileIO;
-import org.apache.iceberg.relocated.com.google.common.collect.ListMultimap;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
-import org.apache.iceberg.relocated.com.google.common.collect.Maps;
-import org.apache.iceberg.relocated.com.google.common.collect.Multimaps;
 import org.apache.iceberg.spark.Spark3Util;
 import org.apache.iceberg.spark.SparkReadOptions;
-import org.apache.iceberg.util.TableScanUtil;
 import org.apache.spark.broadcast.Broadcast;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
@@ -51,6 +47,9 @@ class SparkBatchQueryScan extends SparkBatchScan {
   private final Long startSnapshotId;
   private final Long endSnapshotId;
   private final Long asOfTimestamp;
+  private final Long splitSize;
+  private final Integer splitLookback;
+  private final Long splitOpenFileCost;
 
   private List<CombinedScanTask> tasks = null; // lazy cache of tasks
 
@@ -79,6 +78,11 @@ class SparkBatchQueryScan extends SparkBatchScan {
     } else if (startSnapshotId == null && endSnapshotId != null) {
       throw new IllegalArgumentException("Cannot only specify option end-snapshot-id to do incremental scan");
     }
+
+    // look for split behavior overrides in options
+    this.splitSize = Spark3Util.propertyAsLong(options, SparkReadOptions.SPLIT_SIZE, null);
+    this.splitLookback = Spark3Util.propertyAsInt(options, SparkReadOptions.LOOKBACK, null);
+    this.splitOpenFileCost = Spark3Util.propertyAsLong(options, SparkReadOptions.FILE_OPEN_COST, null);
   }
 
   @Override
@@ -105,42 +109,35 @@ class SparkBatchQueryScan extends SparkBatchScan {
         }
       }
 
-      scan = scan.option(TableProperties.SPLIT_SIZE, String.valueOf(splitSize(scan)));
-      scan = scan.option(TableProperties.SPLIT_LOOKBACK, String.valueOf(splitLookback()));
-      scan = scan.option(TableProperties.SPLIT_OPEN_FILE_COST, String.valueOf(splitOpenFileCost()));
+      if (splitSize != null) {
+        scan = scan.option(TableProperties.SPLIT_SIZE, splitSize.toString());
+      }
+
+      if (splitLookback != null) {
+        scan = scan.option(TableProperties.SPLIT_LOOKBACK, splitLookback.toString());
+      }
+
+      if (splitOpenFileCost != null) {
+        scan = scan.option(TableProperties.SPLIT_OPEN_FILE_COST, splitOpenFileCost.toString());
+      }
+
+      Collection<PartitionField> selected = preservedPartitions();
+      if (selected != null) {
+        List<String> selectedColumns =
+            selected.stream()
+                .map(pf -> table().spec().schema().findField(pf.sourceId()).name())
+                .collect(Collectors.toList());
+        scan = scan.preservePartitions(selectedColumns);
+      }
 
       for (Expression filter : filterExpressions()) {
         scan = scan.filter(filter);
       }
 
-      // check if we should combine splits by partition boundary or not
-      if (splitByPartition()) {
-        try (
-            CloseableIterable<FileScanTask> files = scan.planFiles();
-            CloseableIterable<FileScanTask> splitFiles = TableScanUtil.splitFiles(files,
-                splitSize(scan))
-        ) {
-          ListMultimap<StructLike, FileScanTask> groupedFiles = Multimaps.newListMultimap(
-              Maps.newHashMap(), Lists::newArrayList);
-          splitFiles.forEach(f -> groupedFiles.put(f.partition(), f));
-
-          long splitSize = splitSize(scan);
-          this.tasks = Lists.newArrayList(
-              CloseableIterable.concat(
-                  groupedFiles.asMap().values().stream().map(t ->
-                      TableScanUtil.planTasks(CloseableIterable.withNoopClose(t),
-                          splitSize, splitLookback(), splitOpenFileCost()
-                      )).collect(Collectors.toList()))
-          );
-        } catch (IOException e) {
-          throw new UncheckedIOException("Failed to close table scan: " + scan, e);
-        }
-      } else {
-        try (CloseableIterable<CombinedScanTask> tasksIterable = scan.planTasks()) {
-          this.tasks = Lists.newArrayList(tasksIterable);
-        }  catch (IOException e) {
-          throw new UncheckedIOException("Failed to close table scan: " + scan, e);
-        }
+      try (CloseableIterable<CombinedScanTask> tasksIterable = scan.planTasks()) {
+        this.tasks = Lists.newArrayList(tasksIterable);
+      }  catch (IOException e) {
+        throw new RuntimeIOException(e, "Failed to close table scan: %s", scan);
       }
     }
 

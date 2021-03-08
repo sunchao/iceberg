@@ -128,8 +128,8 @@ public class AllManifestsTable extends BaseMetadataTable {
     }
 
     @Override
-    public long targetSplitSize() {
-      return tableOps().current().propertyAsLong(
+    protected long targetSplitSize(TableOperations ops) {
+      return ops.current().propertyAsLong(
           TableProperties.METADATA_SPLIT_SIZE, TableProperties.METADATA_SPLIT_SIZE_DEFAULT);
     }
 
@@ -207,11 +207,6 @@ public class AllManifestsTable extends BaseMetadataTable {
     @Override
     public PartitionSpec spec() {
       return manifestListTask.spec();
-    }
-
-    @Override
-    public StructLike partition() {
-      return manifestListTask.partition();
     }
 
     @Override

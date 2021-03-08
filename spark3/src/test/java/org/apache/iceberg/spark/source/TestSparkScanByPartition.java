@@ -36,10 +36,14 @@ import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.hadoop.HadoopTables;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.spark.SparkReadOptions;
+import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.iceberg.types.Types;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.read.Batch;
 import org.apache.spark.sql.connector.read.InputPartition;
+import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.connector.write.LogicalWriteInfoImpl;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.AfterClass;
 import org.junit.Before;
@@ -65,6 +69,7 @@ public class TestSparkScanByPartition {
       .bucket("data", 16)
       .build();
   private static SparkSession spark = null;
+  private static CaseInsensitiveStringMap options = null;
 
   @Rule
   public TemporaryFolder temp = new TemporaryFolder();
@@ -91,8 +96,11 @@ public class TestSparkScanByPartition {
         .set(TableProperties.SPLIT_SIZE, String.valueOf(128 * MB))
         .set(TableProperties.SPLIT_OPEN_FILE_COST, String.valueOf(4 * MB))
         .set(TableProperties.SPLIT_LOOKBACK, String.valueOf(Integer.MAX_VALUE))
-        .set(TableProperties.SPLIT_BY_PARTITION, String.valueOf(true))
         .commit();
+    options = new CaseInsensitiveStringMap(
+        ImmutableMap.of(
+            "path", table.location(),
+            SparkReadOptions.BY_PARTITION, "true"));
   }
 
   @Test
@@ -101,8 +109,6 @@ public class TestSparkScanByPartition {
       List<DataFile> partitionFiles = newFiles(1, 32 * MB, Row.of(i));
       appendFiles(partitionFiles);
     }
-    CaseInsensitiveStringMap options = new CaseInsensitiveStringMap(
-        ImmutableMap.of("path", table.location()));
     SparkScanBuilder builder = new SparkScanBuilder(spark, table, options);
     Batch scan = builder.build().toBatch();
     InputPartition[] splits = scan.planInputPartitions();
@@ -112,13 +118,28 @@ public class TestSparkScanByPartition {
   }
 
   @Test
+  public void testUnpartitioned() throws IOException {
+    File tableDir = temp.newFolder();
+    String tableLocation = tableDir.toURI().toString();
+    table = TABLES.create(SCHEMA, tableLocation);
+
+    for (int i = 0; i < 4; i++) {
+      List<DataFile> partitionFiles = newFiles(1, 32 * MB, Row.of(i));
+      appendFiles(partitionFiles);
+    }
+    SparkScanBuilder builder = new SparkScanBuilder(spark, table, options);
+
+    Batch scan = builder.build().toBatch();
+    InputPartition[] splits = scan.planInputPartitions();
+    assertEquals(1, splits.length);
+  }
+
+  @Test
   public void testGroupWithinPartition() {
     for (int i = 0; i < 4; i++) {
       List<DataFile> files = newFiles(4, 32 * MB, Row.of(i));
       appendFiles(files);
     }
-    CaseInsensitiveStringMap options = new CaseInsensitiveStringMap(
-        ImmutableMap.of("path", table.location()));
     SparkScanBuilder builder = new SparkScanBuilder(spark, table, options);
     InputPartition[] splits = builder.build().toBatch().planInputPartitions();
     assertEquals(4, splits.length);
@@ -130,6 +151,20 @@ public class TestSparkScanByPartition {
     }
     splits = builder.build().toBatch().planInputPartitions();
     assertEquals(12, splits.length);
+  }
+
+  @Test
+  public void testMergeScan() {
+    for (int i = 0; i < 4; i++) {
+      List<DataFile> files = newFiles(6, 32 * MB, Row.of(i));
+      appendFiles(files);
+    }
+
+    LogicalWriteInfo info = new LogicalWriteInfoImpl(
+        UUID.randomUUID().toString(), SparkSchemaUtil.convert(table.schema()), options);
+    SparkMergeBuilder builder = new SparkMergeBuilder(spark, table, "merge", info);
+    InputPartition[] splits = builder.asScanBuilder().build().toBatch().planInputPartitions();
+    assertEquals(8, splits.length);
   }
 
   private void appendFiles(Iterable<DataFile> files) {
