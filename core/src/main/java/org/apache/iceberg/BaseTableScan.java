@@ -223,7 +223,7 @@ abstract class BaseTableScan implements TableScan {
       }
     }
 
-    return newRefinedScan(ops, table, schema, context.preservedPartitionIndices(selected));
+    return newRefinedScan(ops, table, schema, context.withPreservedPartitionIndices(selected));
   }
 
   @Override

@@ -148,8 +148,7 @@ final class TableScanContext {
     return preservedPartitionIndices;
   }
 
-  TableScanContext preservedPartitionIndices(Set<Integer> indices) {
-    Preconditions.checkState(preservedPartitionIndices == null);
+  TableScanContext withPreservedPartitionIndices(Set<Integer> indices) {
     return new TableScanContext(snapshotId, rowFilter, ignoreResiduals,
         caseSensitive, colStats, projectedSchema, null, options, fromSnapshotId, toSnapshotId,
         indices);

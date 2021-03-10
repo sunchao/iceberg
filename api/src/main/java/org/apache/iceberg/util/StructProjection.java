@@ -56,16 +56,6 @@ public class StructProjection implements StructLike {
   }
 
   /**
-   * Creates a projecting wrapper for {@link StructLike} rows by copying from `other`.
-   *
-   * @param other the projection wrapper to copy from
-   * @return a wrapper to project rows
-   */
-  public static StructProjection create(StructProjection other) {
-    return new StructProjection(other);
-  }
-
-  /**
    * Creates a projecting wrapper for {@link StructLike} rows.
    * <p>
    * This projection does not work with repeated types like lists and maps.
@@ -129,6 +119,10 @@ public class StructProjection implements StructLike {
   public StructProjection wrap(StructLike newStruct) {
     this.struct = newStruct;
     return this;
+  }
+
+  public StructProjection copy() {
+    return new StructProjection(this);
   }
 
   public StructType type() {

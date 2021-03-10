@@ -28,6 +28,7 @@ import org.apache.iceberg.CombinedScanTask;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.io.CloseableIterable;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.FluentIterable;
 import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
 import org.apache.iceberg.relocated.com.google.common.collect.ListMultimap;
@@ -58,8 +59,8 @@ public class TableScanUtil {
   }
 
   public static CloseableIterable<CombinedScanTask> planTasks(CloseableIterable<FileScanTask> splitFiles,
-      long splitSize, int lookback, long openFileCost, PartitionSpec spec) {
-    return planTasks(splitFiles, splitSize, lookback, openFileCost, spec, null);
+      long splitSize, int lookback, long openFileCost) {
+    return planTasks(splitFiles, splitSize, lookback, openFileCost, null, null);
   }
 
   public static CloseableIterable<CombinedScanTask> planTasks(CloseableIterable<FileScanTask> splitFiles,
@@ -68,6 +69,8 @@ public class TableScanUtil {
     Function<FileScanTask, Long> weightFunc = file -> Math.max(file.length(), openFileCost);
 
     if (preservedPartitionIndices != null) {
+      Preconditions.checkArgument(spec != null, "spec can't be null when " +
+          "preservedPartitionIndices is not null");
       StructProjection projectedStruct = StructProjection.create(spec.partitionType(),
           preservedPartitionIndices);
       Types.StructType projectedPartitionType = projectedStruct.type();
@@ -76,7 +79,7 @@ public class TableScanUtil {
 
       splitFiles.forEach(f -> {
         StructLikeWrapper wrapper = StructLikeWrapper.forType(projectedPartitionType)
-            .set(StructProjection.create(projectedStruct).wrap(f.file().partition()));
+            .set(projectedStruct.copy().wrap(f.file().partition()));
         groupedFiles.put(wrapper, f);
       });
 
