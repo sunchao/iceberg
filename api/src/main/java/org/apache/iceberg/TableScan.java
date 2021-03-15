@@ -190,7 +190,7 @@ public interface TableScan {
    * @param columns the partition column names to preserve boundary when planning tasks
    * @return a table scan preserving partition boundary when planning tasks
    * @throws IllegalArgumentException if any of the input columns is not a partition column, or
-   *         if the table is unpartitioned, or `columns` is empty.
+   *         if the table is un-partitioned.
    */
   TableScan preservePartitions(Collection<String> columns);
 
@@ -203,7 +203,7 @@ public interface TableScan {
    * @param columns the partition column names to preserve boundary when planning tasks
    * @return a table scan preserving partition boundary when planning tasks
    * @throws IllegalArgumentException if any of the input columns is not a partition column, or
-   *         if the table is unpartitioned, or `columns` is empty.
+   *         if the table is un-partitioned.
    */
   default TableScan preservePartitions(String... columns) {
     return preservePartitions(Lists.newArrayList(columns));

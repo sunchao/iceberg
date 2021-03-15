@@ -200,11 +200,8 @@ abstract class BaseTableScan implements TableScan {
 
   @Override
   public TableScan preservePartitions(Collection<String> columns) {
-    if (columns.isEmpty()) {
-      throw new IllegalArgumentException("columns must be non-empty");
-    }
     if (table.spec().isUnpartitioned()) {
-      throw new IllegalArgumentException("Table is unpartitioned while input columns are non-empty");
+      throw new IllegalArgumentException("Can't call preservePartitions on un-partitioned tables");
     }
 
     Set<Integer> selected = Sets.newHashSet();
@@ -223,7 +220,7 @@ abstract class BaseTableScan implements TableScan {
       }
     }
 
-    return newRefinedScan(ops, table, schema, context.withPreservedPartitionIndices(selected));
+    return newRefinedScan(ops, table, schema, context.withPreservedPartitionIds(selected));
   }
 
   @Override
@@ -273,7 +270,7 @@ abstract class BaseTableScan implements TableScan {
     CloseableIterable<FileScanTask> fileScanTasks = planFiles();
     CloseableIterable<FileScanTask> splitFiles = TableScanUtil.splitFiles(fileScanTasks, splitSize);
     return TableScanUtil.planTasks(splitFiles, splitSize, lookback, openFileCost,
-        table.spec(), context.preservedPartitionIndices());
+        table.spec(), context.preservedPartitionIds());
   }
 
   @Override

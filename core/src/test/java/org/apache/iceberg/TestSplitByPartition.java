@@ -99,6 +99,14 @@ public class TestSplitByPartition {
       assertEquals(128 * MB, taskSize(t));
     }
     assertEquals(10, Iterables.size(tasks));
+
+    // calling the method with empty list means no constraint on splits combining
+    scan = table.newScan().preservePartitions();
+    tasks = scan.planTasks();
+    for (CombinedScanTask t : tasks) {
+      assertEquals(128 * MB, taskSize(t));
+    }
+    assertEquals(10, Iterables.size(tasks));
   }
 
   @Test
@@ -115,25 +123,13 @@ public class TestSplitByPartition {
         "is not a partition column",
         () -> table.newScan().preservePartitions("id", "part_col1"));
 
-    AssertHelpers.assertThrows(
-        "should throw exception when input column is empty",
-        IllegalArgumentException.class,
-        "columns must be non-empty",
-        () -> table.newScan().preservePartitions());
-
-    AssertHelpers.assertThrows(
-        "should throw exception when input column is empty",
-        IllegalArgumentException.class,
-        "columns must be non-empty",
-        () -> table.newScan().preservePartitions(Lists.newArrayList()));
-
     File tableDir = temp.newFolder();
     String tableLocation = tableDir.toURI().toString();
     table = TABLES.create(SCHEMA, tableLocation);
     AssertHelpers.assertThrows(
-        "should throw exception when applying to unpartitioned tables",
+        "should throw exception when applying to un-partitioned tables",
         IllegalArgumentException.class,
-        "is unpartitioned while input columns are non-empty",
+        "Can't call preservePartitions on un-partitioned tables",
         () -> table.newScan().preservePartitions("part_col1"));
   }
 

@@ -65,14 +65,14 @@ public class TableScanUtil {
 
   public static CloseableIterable<CombinedScanTask> planTasks(CloseableIterable<FileScanTask> splitFiles,
       long splitSize, int lookback, long openFileCost, PartitionSpec spec,
-      Set<Integer> preservedPartitionIndices) {
+      Set<Integer> preservedPartitionIds) {
     Function<FileScanTask, Long> weightFunc = file -> Math.max(file.length(), openFileCost);
 
-    if (preservedPartitionIndices != null) {
+    if (preservedPartitionIds != null && !preservedPartitionIds.isEmpty()) {
       Preconditions.checkArgument(spec != null, "spec can't be null when " +
-          "preservedPartitionIndices is not null");
+          "preservedPartitionIds is not null");
       StructProjection projectedStruct = StructProjection.create(spec.partitionType(),
-          preservedPartitionIndices);
+          preservedPartitionIds);
       Types.StructType projectedPartitionType = projectedStruct.type();
       ListMultimap<StructLikeWrapper, FileScanTask> groupedFiles = Multimaps.newListMultimap(
           Maps.newHashMap(), Lists::newArrayList);
