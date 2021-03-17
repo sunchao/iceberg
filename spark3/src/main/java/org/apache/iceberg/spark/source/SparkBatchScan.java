@@ -168,7 +168,9 @@ abstract class SparkBatchScan implements Scan, Batch, SupportsReportStatistics, 
 
   @Override
   public SortOrder[] ordering() {
-    return Spark3Util.buildRequiredOrdering(distribution(), table);
+    // TODO: maybe we could return ordering spec when there is one AND all input splits only
+    //  contain a single file?
+    return new SortOrder[]{};
   }
 
   @Override
