@@ -51,6 +51,7 @@ import org.apache.spark.sql.execution.FilterExec
 import org.apache.spark.sql.execution.LeafExecNode
 import org.apache.spark.sql.execution.ProjectExec
 import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.AnalysisException
 import scala.collection.JavaConverters._
 
 case class ExtendedDataSourceV2Strategy(spark: SparkSession) extends Strategy {
@@ -83,12 +84,23 @@ case class ExtendedDataSourceV2Strategy(spark: SparkSession) extends Strategy {
     case PhysicalOperation(project, filters, DataSourceV2ScanRelation(_, scan, output)) =>
       val (distribution, ordering) = scan match {
         case v: SupportsReportPartitioning =>
-          val distribution = DistributionAndOrderingUtils.toCatalyst(
-            v.distribution, plan, spark.sessionState.conf.resolver)
-          val ordering = v.ordering.map(
-            DistributionAndOrderingUtils.toCatalyst(_, plan, spark.sessionState.conf.resolver)
-              .asInstanceOf[SortOrder]).toSeq
-          (Some(distribution), ordering)
+          try {
+            val distribution = DistributionAndOrderingUtils.toCatalyst(
+              v.distribution, plan, spark.sessionState.conf.resolver)
+            val ordering = v.ordering.map(
+              DistributionAndOrderingUtils.toCatalyst(_, plan, spark.sessionState.conf.resolver)
+                .asInstanceOf[SortOrder]).toSeq
+            (Some(distribution), ordering)
+          } catch {
+            // this could happen if the distribution refers to attributes that have been pruned
+            // due to `V2ScanRelationPushDown`. In this case, we just fallback to the case where
+            // distribution is not specified.
+            // TODO: we should resolve attributes before the projection pushdown but it could be
+            //  tricky with Spark extensions
+            case _: AnalysisException =>
+              (None, Seq.empty)
+          }
+
         case _ =>
           (None, Seq.empty)
       }

@@ -19,6 +19,7 @@
 
 package org.apache.iceberg.spark.extensions;
 
+import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -115,7 +116,7 @@ public class TestDataSourcePartitioning extends SparkExtensionsTestBase implemen
     sql("CREATE TABLE %s (id bigint NOT NULL, ts TIMESTAMP, value int) USING iceberg " +
         "PARTITIONED BY (bucket(32, id), days(ts))", tableName2);
     sql("ALTER TABLE %s WRITE UNORDERED DISTRIBUTED BY PARTITION", tableName2);
-    Table table2 = validationCatalog.loadTable(tableIdent);
+    Table table2 = validationCatalog.loadTable(tableIdent2);
 
     distributionMode = table2.properties().get(TableProperties.WRITE_DISTRIBUTION_MODE);
     Assert.assertEquals("Distribution mode must match", "hash", distributionMode);
@@ -138,6 +139,83 @@ public class TestDataSourcePartitioning extends SparkExtensionsTestBase implemen
     // partition keys and join keys order mismatch will trigger shuffle
     checkResult("SELECT t1.id, data, value FROM %s t1 JOIN %s t2 ON " +
         "t1.ts = t2.ts AND t1.id = t2.id", 2, expected, tableName, tableName2);
+  }
+
+  @Test
+  public void testGroupingPartitions() {
+    sql("CREATE TABLE %s (id bigint NOT NULL, ts TIMESTAMP, data string) USING iceberg " +
+        "PARTITIONED BY (bucket(32, id), days(ts))", tableName);
+    sql("ALTER TABLE %s WRITE UNORDERED DISTRIBUTED BY PARTITION", tableName);
+    Table table = validationCatalog.loadTable(tableIdent);
+
+    String distributionMode = table.properties().get(TableProperties.WRITE_DISTRIBUTION_MODE);
+    Assert.assertEquals("Distribution mode must match", "hash", distributionMode);
+
+    sql("INSERT INTO TABLE %s VALUES (1, cast('2020-01-01 00:00:00' as timestamp), 'a'), " +
+        "(2, cast('2020-02-01 00:00:00' as timestamp), 'b'), " +
+        "(3, cast('2020-03-01 00:00:00' as timestamp), 'c'), " +
+        "(4, cast('2020-04-01 00:00:00' as timestamp), 'd')", tableName);
+
+    sql("CREATE TABLE %s (id bigint NOT NULL, key string, value int) USING iceberg " +
+        "PARTITIONED BY (bucket(32, id), key)", tableName2);
+    sql("ALTER TABLE %s WRITE UNORDERED DISTRIBUTED BY PARTITION", tableName2);
+    Table table2 = validationCatalog.loadTable(tableIdent2);
+
+    distributionMode = table2.properties().get(TableProperties.WRITE_DISTRIBUTION_MODE);
+    Assert.assertEquals("Distribution mode must match", "hash", distributionMode);
+
+    sql("INSERT INTO TABLE %s VALUES (1,'aaa', 10), (2, 'bbb', 20), (2, 'bbb', 25), " +
+            "(3, 'ccc', 30), (4, 'ddd', 40)", tableName2);
+
+    List<Object[]> expected = new ArrayList<>();
+    expected.add(new Object[]{1L, "a", Timestamp.valueOf("2020-01-01 00:00:00"), "aaa", 10});
+    expected.add(new Object[]{2L, "b", Timestamp.valueOf("2020-02-01 00:00:00"), "bbb", 20});
+    expected.add(new Object[]{2L, "b", Timestamp.valueOf("2020-02-01 00:00:00"), "bbb", 25});
+    expected.add(new Object[]{3L, "c", Timestamp.valueOf("2020-03-01 00:00:00"), "ccc", 30});
+    expected.add(new Object[]{4L, "d", Timestamp.valueOf("2020-04-01 00:00:00"), "ddd", 40});
+
+    checkResult("SELECT t1.id, data, ts, key, value FROM %s t1 JOIN %s t2 ON t1.id = t2.id",
+        0, expected, tableName, tableName2);
+  }
+
+  @Test
+  public void testGroupingPartitionsFallback() {
+    sql("CREATE TABLE %s (id bigint NOT NULL, ts TIMESTAMP, data string) USING iceberg " +
+        "PARTITIONED BY (bucket(32, id), days(ts))", tableName);
+    sql("ALTER TABLE %s WRITE UNORDERED DISTRIBUTED BY PARTITION", tableName);
+    Table table = validationCatalog.loadTable(tableIdent);
+
+    String distributionMode = table.properties().get(TableProperties.WRITE_DISTRIBUTION_MODE);
+    Assert.assertEquals("Distribution mode must match", "hash", distributionMode);
+
+    sql("INSERT INTO TABLE %s VALUES (1, cast('2020-01-01 00:00:00' as timestamp), 'a'), " +
+        "(2, cast('2020-02-01 00:00:00' as timestamp), 'b'), " +
+        "(3, cast('2020-03-01 00:00:00' as timestamp), 'c'), " +
+        "(4, cast('2020-04-01 00:00:00' as timestamp), 'd')", tableName);
+
+    sql("CREATE TABLE %s (id bigint NOT NULL, key string, value int) USING iceberg " +
+        "PARTITIONED BY (bucket(32, id), key)", tableName2);
+    sql("ALTER TABLE %s WRITE UNORDERED DISTRIBUTED BY PARTITION", tableName2);
+    Table table2 = validationCatalog.loadTable(tableIdent2);
+
+    distributionMode = table2.properties().get(TableProperties.WRITE_DISTRIBUTION_MODE);
+    Assert.assertEquals("Distribution mode must match", "hash", distributionMode);
+
+    sql("INSERT INTO TABLE %s VALUES (1,'aaa', 10), (2, 'bbb', 20), (2, 'bbb', 25), " +
+        "(3, 'ccc', 30), (4, 'ddd', 40)", tableName2);
+
+    List<Object[]> expected = new ArrayList<>();
+    expected.add(new Object[]{1L, "a", 10});
+    expected.add(new Object[]{2L, "b", 20});
+    expected.add(new Object[]{2L, "b", 25});
+    expected.add(new Object[]{3L, "c", 30});
+    expected.add(new Object[]{4L, "d", 40});
+
+    // `t1.ts` and `t2.key` are not selected, as result, due to projection pushdown in Spark the
+    // corresponding expressions in clustered distribution cannot be resolved (see
+    // `ExtendedDataSourceV2Strategy` for more details. In this case we should fallback to old ways.
+    checkResult("SELECT t1.id, data, value FROM %s t1 JOIN %s t2 ON t1.id = t2.id",
+        2, expected, tableName, tableName2);
   }
 
   @Test

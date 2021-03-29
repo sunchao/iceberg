@@ -29,14 +29,14 @@ import org.apache.spark.sql.connector.read.InputPartition;
  * information to avoid data shuffling in certain scenarios, such as join, aggregate, etc. Note
  * that Spark requires ALL input partitions to implement this interface, otherwise it can't take
  * advantage of it.
- *
+ * <p>
  * This interface should be used in combination with {@link SupportsReportPartitioning}, which
  * allows data sources to report distribution and ordering spec to Spark. In particular, Spark
  * expects data sources to report
  * {@link org.apache.spark.sql.connector.iceberg.distributions.ClusteredDistribution} whenever
  * its input partitions implement this interface. Spark derives partition keys spec (e.g., column
  * names, transforms) from the distribution, and partition values from the input partitions.
- *
+ * <p>
  * It is implementor's responsibility to ensure that when an input partition implements this
  * interface, its records all have the same value for the partition keys. Spark doesn't check
  * this property.

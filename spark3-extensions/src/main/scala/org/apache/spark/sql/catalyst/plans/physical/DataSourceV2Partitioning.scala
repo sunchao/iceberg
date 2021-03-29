@@ -47,9 +47,9 @@ import scala.annotation.tailrec
  * On the other hand, `[50, 50, 51]` is not a valid value for `partitionValues` since `50` is
  * duplicated twice.
  *
- * - `expressions`: partition expressions for the partitioning.
- * - `partitionValues`: the values for the cluster keys of the distribution, must be in ascending
- *   order.
+ * @param expressions partition expressions for the partitioning.
+ * @param partitionValues the values for the cluster keys of the distribution, must be in ascending
+ *                        order.
  */
 case class DataSourceV2Partitioning(
     expressions: Seq[Expression],
@@ -60,9 +60,14 @@ case class DataSourceV2Partitioning(
     super.satisfies0(required) || {
       required match {
         case p: HashClusteredDistribution =>
-          val attributes = expressions.map(DataSourceV2Partitioning.collectLeafExpression)
-          p.expressions.length == attributes.length &&
-            p.expressions.zip(attributes).forall {
+          // we only check if the clustering expressions from the required distribution
+          // is a subset of leaf attributes of the data source partitioning here, and a more
+          // strict check will be enforced later in `CheckDataSourcePartitioning`.
+          val attributes = expressions
+            .map(DataSourceV2Partitioning.collectLeafExpression)
+            .filter(c => p.expressions.exists(_.semanticEquals(c)))
+          attributes.length == p.expressions.length &&
+            attributes.zip(p.expressions).forall {
               case (l, r) => l.semanticEquals(r)
             }
         case p: ClusteredDistribution =>
